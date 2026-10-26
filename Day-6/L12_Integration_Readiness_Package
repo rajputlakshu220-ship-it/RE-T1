@@ -1,0 +1,289 @@
+# L12 – UAV Software Integration Readiness Package
+
+**Project Code:** RE-T1-UAV  
+**System Authority:** RudraEdge Aerospace – Autonomous Systems Division  
+**Assigned Engineer:** Lakshay Thakur (Candidate ID: `TRAIN-004`)  
+**Assigned Role:** Systems Integration Engineer  
+**Document Identifier:** `L12_README`  
+**Lifecycle Milestone:** Integration Readiness Package (Day 6 Deliverable)  
+**Effective Date:** 27 October 2026  
+**Baseline Status:** Consolidated Release Baseline v1.2.0
+
+---
+
+## 1. Executive Summary and Purpose
+
+The `L12_Integration_Readiness_Package` serves as a centralized technical archive and consolidation repository for engineering artifacts produced during the Phase 1 software integration cycle of the RudraEdge UAV Flight Platform.
+
+This repository consolidates:
+
+1. High-level system architecture and inter-module topology (M01 through M07).
+2. Data interface contracts, serialization specifications, and error-control rules (IF-01 through IF-07).
+3. Runtime environment configurations and Software-in-the-Loop (SITL) parameter definitions.
+4. Synthetic-data flow automation and telemetry execution logs.
+5. Compatibility test reports, defect tracking registers, and requirements traceability matrices.
+
+This document is an index and technical onboarding guide for systems engineers, verification leads, and flight software testers preparing for Stage 2 Hardware-in-the-Loop (HIL) testing.
+
+> **Scope note:** This document summarizes the package and the records described in the source material. Any status stated here should be confirmed against the actual artifacts and test evidence before being treated as independently verified.
+
+---
+
+## 2. Directory Hierarchy and Package Structure
+
+The repository is organized by training milestone, preserving the engineering deliverables for each phase.
+
+```text
+L12_Integration_Readiness_Package/
+├── Day-1/
+│   ├── L01_System_Module_Map.md
+│   └── L02_Software_Integration_Block_Diagram.pdf
+├── Day-2/
+│   ├── L03_Module_Interface_Specification.md
+│   └── L04_Interface_Compatibility_Checklist.xlsx
+├── Day-3/
+│   ├── L05_Integration_Workspace_Structure.md
+│   └── L06_Integration_Configuration.json
+├── Day-4/
+│   ├── L08_Synthetic_Data_Flow_Demo.py
+│   └── L09_Data_Flow_Execution_Log.md
+├── Day-5/
+│   ├── L10_Integration_Compatibility_Test_Report.md
+│   └── L11_Integration_Defect_Register.xlsx
+└── README.md
+```
+
+| Artifact | Purpose |
+|---|---|
+| `L01_System_Module_Map.md` | High-level module architecture and boundaries |
+| `L02_Software_Integration_Block_Diagram.pdf` | Architecture blocks and communication buses |
+| `L03_Module_Interface_Specification.md` | Interface contracts, wire protocols, and bit fields |
+| `L04_Interface_Compatibility_Checklist.xlsx` | Interface field audit, conversion, and timing rules |
+| `L05_Integration_Workspace_Structure.md` | Workspace directory structure and build layout |
+| `L06_Integration_Configuration.json` | Runtime parameters, ports, timeouts, and buffers |
+| `L08_Synthetic_Data_Flow_Demo.py` | Synthetic telemetry generation and pipeline harness |
+| `L09_Data_Flow_Execution_Log.md` | Trace logs for synthetic batch runs |
+| `L10_Integration_Compatibility_Test_Report.md` | Integration compatibility test report |
+| `L11_Integration_Defect_Register.xlsx` | Defect register and traceability information |
+| `README.md` | Consolidated package overview |
+
+---
+
+## 3. System Architecture and Module Map Summary (L01/L02)
+
+The source architecture describes seven primary subsystem modules operating across Linux/POSIX companion processes and bare-metal or RTOS microcontroller partitions.
+
+| Module ID | Module Title | Subsystem Role | Target Execution Environment | Update Rate |
+|---|---|---|---|---|
+| **M01** | Interface Central Registry (`ICR`) | Dialect versioning, schema validation, and CRC seed distribution | In-memory host library / POSIX IPC | Static / on demand |
+| **M02** | Device State & Safety Controller (`DSC`) | Hardware pre-arm checks, sensor calibration status, and emergency gate | Microcontroller bare metal / RTOS ISR | 10 Hz periodic |
+| **M03** | Synthetic Dynamics Generator (`SDG`) | Flight kinematic models and GPS/IMU/barometer signal injection | Linux user space / SITL thread | 50 Hz periodic |
+| **M04** | Ingestion & Telemetry Aggregator (`IAG`) | Packet framing (`0xFD`), validation, and timestamp normalization | High-priority core worker process | 50 Hz streaming |
+| **M05** | Core Processing & Guidance Engine (`CPE`) | 15-state EKF, attitude-quaternion PID, and waypoint navigation | Real-time dedicated control task | 100 Hz real time |
+| **M06** | Actuator & Peripheral Adapter (`PSA`) | PWM pulse generation (1000–2000 µs) and failsafe-disarm latching | Hardware timer output ISR / SQLite | 400 Hz / asynchronous |
+| **M07** | Integration Verification Replay (`IVR`) | Black-box trace audit, SITL orchestration, and automated reset harness | Diagnostic daemon / loopback IPC | Asynchronous |
+
+---
+
+## 4. Master Interface Contract Specifications (L03)
+
+The source material describes seven binary interface contracts connecting the modules.
+
+### 4.1 Interface Flow Overview
+
+```text
+              [M01: Interface Central Registry (ICR)]
+                              |
+                 IF-01: Schema Query & CRC Seeds
+                       /                \
+                      v                  v
+       [M03: Synthetic Dynamics]   [M02: Device State Controller]
+                      |                  |
+             IF-03: 50 Hz          IF-02: 10 Hz
+             Kinematics            Pre-Arm Gate
+                      \                  /
+                       v                v
+                 [M04: Ingestion & Aggregator]
+                              |
+               IF-04: Normalized Canonical Frame
+                              |
+                              v
+                 [M05: Core Processing Engine]
+                              |
+                 IF-05: Actuator Control PWM
+                              |
+                              v
+                 [M06: Actuator Output Adapter]
+                              |
+                 IF-06: Diagnostic Flight Trace
+                              |
+                              v
+              [M07: Verification & Replay Harness]
+                              ^
+                              |
+                    IF-07: SITL Reset & Sync
+                              |
+                         [M02 / M03]
+```
+
+### 4.2 Detailed Interface Descriptions
+
+- **`IF-01` – Telemetry and Schema Distribution:** Provides Semantic Versioning (SemVer) schema verification (`0x010200`) and message CRC32 hashes. The stated goal is to avoid schema mismatches between the companion computer and flight controller.
+- **`IF-02` – Flight Readiness and Pre-Arm Gate:** A periodic 10 Hz heartbeat carrying a 32-bit atomic bitmask representing IMU health, GPS 3D fix, RC link state, battery-voltage threshold, and arming permissives.
+- **`IF-03` – Synthetic Flight and Sensor Stream:** A 50 Hz kinematic telemetry stream framed with the `0xFD` marker, sequential packet IDs, sensor payload, and 16-bit X.25 CRC.
+- **`IF-04` – Validated Canonical Flight Frame:** A normalized flight-state frame delivered to the EKF using SI units: acceleration in `m/s²`, angular rate in `rad/s`, and pressure in `Pa`.
+- **`IF-05` – GNC State, Actuator, and ACK Stream:** Motor-mixer commands translate normalized roll, pitch, yaw, and thrust values into ESC pulse-width modulation signals from `1000 µs` to `2000 µs`.
+- **`IF-06` – Telemetry Audit and Flight Trace:** A non-blocking circular trace logger records flight anomalies, state changes, and packet drops to persistent storage.
+- **`IF-07` – SITL Orchestration and Reset Command:** A synchronization interface through which automated tests can request origin snaps, kinematic-vector resets, and hardware-state clears.
+
+---
+
+## 5. Compatibility Checklist Summary (L04)
+
+The source checklist, `L04_Interface_Compatibility_Checklist.xlsx`, is described as evaluating 70 critical interface fields across the communication pipeline.
+
+| Checklist Measure | Reported Result |
+|---|---:|
+| Total fields audited | 70 |
+| Direct-compatible fields | 64 |
+| Conditional / scale-dependent fields | 6 |
+| Incompatible fields | 0 |
+| Overall compatibility status | **PASS (as reported)** |
+
+### 5.1 Conditional or Scale-Dependent Fields
+
+1. **`IF-03.baro_pressure`:** The sensor streams pressure in hectopascals (`hPa`); multiply by `100.0` to convert to pascals (`Pa`) before canonical ingestion.
+2. **`IF-03.gyro_angular_rate`:** The sensor transmits degrees per second (`deg/s`); convert to radians per second (`rad/s`).
+3. **`IF-03.accel_g_force`:** The measurement is in `G`; multiply by standard gravity (`9.80665 m/s²`) to convert to acceleration.
+4. **`IF-04.timestamp_monotonic`:** The raw monotonic sensor-clock count requires alignment to a UTC epoch zero point if UTC timestamps are needed.
+5. **`IF-05.throttle_cmd`:** A normalized floating-point command in `[0.0, 1.0]` maps linearly to an integer pulse width in `[1000, 2000] µs`.
+6. **`IF-05.control_surface_deflection`:** Surface deflection angles from `-25°` to `+25°` map to PWM values from `1100 µs` to `1900 µs`.
+
+---
+
+## 6. Workspace Layout and Environment Configuration (L05/L06)
+
+The source material states that the integration workspace layout is described in `L05_Integration_Workspace_Structure.md` and that runtime parameters are defined in `L06_Integration_Configuration.json`.
+
+The configuration example below is transcribed from the source material.
+
+```json
+{
+  "workspace_name": "UAV Software Integration Workspace",
+  "project_code": "RE-T1-UAV",
+  "version": "1.2.0",
+  "environment": "development_local_sitl",
+  "network_endpoints": {
+    "telemetry_udp_ip": "127.0.0.1",
+    "telemetry_udp_port": 14550,
+    "mavlink_stream_port": 14551,
+    "sitl_orchestration_port": 14555
+  },
+  "timing_constraints": {
+    "heartbeat_timeout_ms": 3000,
+    "max_acceptable_jitter_us": 500,
+    "timer_overflow_limit_ms": 15.0,
+    "sensor_stream_rate_hz": 50
+  },
+  "actuator_limits": {
+    "pwm_min_pulse_us": 1000,
+    "pwm_max_pulse_us": 2000,
+    "pwm_disarmed_failsafe_us": 900
+  },
+  "logging": {
+    "circular_buffer_size_kb": 64,
+    "flush_interval_ms": 100,
+    "storage_backend": "sqlite_wal"
+  }
+}
+```
+
+### 6.1 Configuration Notes
+
+- The example uses loopback IP `127.0.0.1` for local telemetry.
+- UDP ports are defined for telemetry, MAVLink streaming, and SITL orchestration.
+- Timing parameters specify a heartbeat timeout, maximum jitter, timer-overflow limit, and sensor stream rate.
+- Actuator parameters define minimum and maximum PWM pulse widths and a disarmed failsafe value.
+- Logging settings define a 64 KB circular buffer, a 100 ms flush interval, and `sqlite_wal` as the named storage backend.
+
+---
+
+## 7. Synthetic Data Flow Pipeline (L08/L09)
+
+The source describes `L08_Synthetic_Data_Flow_Demo.py` as a synthetic-data verification script for end-to-end ingestion, validation, normalization, and output framing.
+
+### 7.1 Pipeline Stages
+
+1. **Ingestion and magic-byte synchronization:** Validate the packet marker `0xFD` and check the expected payload size.
+2. **Checksum verification:** Recalculate the 16-bit CRC using the CRC-16-CCITT / X.25 variant; divert corrupted frames to quarantine.
+3. **Boundary clamping:** Clamp telemetry values to configured limits. The source gives vertical acceleration within `[-30, +30] m/s²` as an example.
+4. **Normalization and serialization:** Emit standardized canonical frames into memory buffers for consumer tasks.
+
+The source execution log, `L09_Data_Flow_Execution_Log.md`, reports 100% processing success for test vectors `REC-001`, `REC-002`, and `REC-003`, with zero unhandled exceptions. This result is a reported status and should be checked against the actual execution log when used for formal acceptance.
+
+---
+
+## 8. Defect Register and Resolution Ledger (L11)
+
+The source defect register describes six defects and their reported engineering resolutions.
+
+| Defect ID | Interface | Subsystem | Severity | Root Cause | Engineering Resolution | Retest Status |
+|---|---|---|---|---|---|---|
+| `DEF-UAV-001` | IF-05 | M06 (PSA) | Major | Negative floating-point actuator PWM value cast directly to `uint16` | Added `calculate_pwm_pulse()` with a saturation clamp | CLOSED / PASS (reported) |
+| `DEF-UAV-002` | IF-03 | M04 (IAG) | Major | Barometric pressure unit mismatch (`hPa` vs `Pa`) | Ingestion parser multiplies sensor pressure by `100.0` | CLOSED / PASS (reported) |
+| `DEF-UAV-003` | IF-04 | M04 (IAG) | Major | 32-bit monotonic timestamp rollover after about 71 minutes | Timestamp structures changed to `uint64_t` microseconds | CLOSED / PASS (reported) |
+| `DEF-UAV-004` | IF-02 | M02 (DSC) | Critical | Race condition during multithreaded pre-arm checking | Added atomic bitwise state evaluation with a mutex guard | CLOSED / PASS (reported) |
+| `DEF-UAV-005` | IF-06 | M07 (IVR) | Moderate | Ring-buffer overflow during sustained 50 Hz logging | Increased buffer to 64 KB and added an asynchronous background flush worker | CLOSED / PASS (reported) |
+| `DEF-UAV-006` | IF-07 | M03 (SDG) | Major | Kinematic velocity vector persisted through an origin reset | Explicitly zeroed acceleration and velocity registers during reset | CLOSED / PASS (reported) |
+
+---
+
+## 9. Requirements Traceability Matrix
+
+The following matrix reproduces the requirement-to-specification mapping described in the source material.
+
+| Requirement Ref. | Description | Governing Specification | Verification Case | Defect Ref. |
+|---|---|---|---|---|
+| `REQ-ICD-001` | Dialect SemVer and CRC distribution | L03, Section 4.1 | `TC-IF01-001` | None listed |
+| `REQ-ICD-002` | Atomic pre-arm gate evaluation | L03, Section 4.2 | `TC-IF02-001` | `DEF-UAV-004` |
+| `REQ-ICD-003` | 50 Hz kinematic stream ingestion | L03, Section 4.3 | `TC-IF03-001` | `DEF-UAV-002` |
+| `REQ-ICD-004` | Canonical frame normalization | L03, Section 4.4 | `TC-IF04-001` | `DEF-UAV-003` |
+| `REQ-ICD-005` | Actuator PWM bound clamping | L03, Section 4.5 | `TC-IF05-001` | `DEF-UAV-001` |
+| `REQ-ICD-006` | Telemetry trace / black-box ingestion | L03, Section 4.6 | `TC-IF06-001` | `DEF-UAV-005` |
+| `REQ-ICD-007` | SITL origin snap and vector reset | L03, Section 4.7 | `TC-IF07-001` | `DEF-UAV-006` |
+
+---
+
+## 10. Operational Handoff and Acceptance Criteria
+
+The source material lists the following readiness gates for moving the package into Phase 2 testing.
+
+- [x] Full source and documentation tree verified in the repository root (reported complete).
+- [x] All seven interface contracts documented with bitmask definitions (reported complete).
+- [x] Configuration JSON validated against JSON Schema Draft 2020-12 (reported complete).
+- [x] All six recorded UAV integration defects verified closed in code and test logs (reported complete).
+- [ ] Physical bench hardware and microcontroller testbeds configured for the HIL harness (pending).
+
+**Handoff note:** The unchecked HIL hardware item remains open in the supplied checklist. Therefore, the document records software-package readiness claims but does not, by itself, establish that physical HIL testing has been completed or that the system is approved for flight.
+
+---
+
+## 11. Package Authorization
+
+**Prepared by:** Lakshay Thakur (`TRAIN-004`), Systems Integration Engineer  
+**Reviewed by:** RudraEdge Systems Integration Authority  
+**Date of Sign-off:** 27 October 2026
+
+---
+
+## 12. Document Control
+
+| Field | Value |
+|---|---|
+| Document | L12 – UAV Software Integration Readiness Package |
+| Document ID | `L12_README` |
+| Project Code | `RE-T1-UAV` |
+| Baseline | `v1.2.0` |
+| Lifecycle Milestone | Integration Readiness Package – Day 6 |
+| Status | Consolidated package summary; confirm against source artifacts before formal approval |
+
